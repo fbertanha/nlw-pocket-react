@@ -1,7 +1,7 @@
 import dayjs from 'dayjs'
 import { db } from '../db'
 import { goalCompletions, goals } from '../db/schema'
-import { between, count, eq, lte, sql } from 'drizzle-orm'
+import { between, desc, eq, lte, sql } from 'drizzle-orm'
 
 export async function getWeekSummary() {
   const startDayOfWeek = dayjs().startOf('week').toDate()
@@ -22,7 +22,7 @@ export async function getWeekSummary() {
   const goalsCompletedInWeek = db.$with('goals_completed_in_week').as(
     db
       .select({
-        id: goals.id,
+        id: goalCompletions.id,
         title: goals.title,
         completedAt: goalCompletions.createdAt,
         completedAtDate: sql`DATE(${goalCompletions.createdAt})`.as(
@@ -32,6 +32,7 @@ export async function getWeekSummary() {
       .from(goalCompletions)
       .innerJoin(goals, eq(goals.id, goalCompletions.goalId))
       .where(between(goalCompletions.createdAt, startDayOfWeek, lastDayOfWeek))
+      .orderBy(desc(goalCompletions.createdAt))
   )
 
   const goalsCompletedByWeekDay = db.$with('goals_completed_by_week_day').as(
@@ -49,7 +50,17 @@ export async function getWeekSummary() {
       })
       .from(goalsCompletedInWeek)
       .groupBy(goalsCompletedInWeek.completedAtDate)
+      .orderBy(desc(goalsCompletedInWeek.completedAtDate))
   )
+
+  type GoalsPerDay = Record<
+    string,
+    {
+      id: string
+      title: string
+      completedAt: string
+    }[]
+  >
 
   const result = await db
     .with(goalsCreatedUpToWeek, goalsCompletedInWeek, goalsCompletedByWeekDay)
@@ -61,7 +72,7 @@ export async function getWeekSummary() {
         sql`(SELECT SUM(${goalsCreatedUpToWeek.desiredWeeklyFrequency}) FROM ${goalsCreatedUpToWeek})`.mapWith(
           Number
         ),
-      goalsPerDay: sql`
+      goalsPerDay: sql<GoalsPerDay>`
         JSON_OBJECT_AGG(
           ${goalsCompletedByWeekDay.goalsCompletedAtDate},
           ${goalsCompletedByWeekDay.completions}
@@ -70,6 +81,6 @@ export async function getWeekSummary() {
     .from(goalsCompletedByWeekDay)
 
   return {
-    summary: result,
+    summary: result[0],
   }
 }
